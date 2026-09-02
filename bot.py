@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import re
 import signal
 import sys
 import time
@@ -19,7 +20,7 @@ DATA_FILE = BASE_DIR / "data.txt"
 PROXY_FILE = BASE_DIR / "proxy.txt"
 CONFIG_FILE = BASE_DIR / "config.json"
 BASE_URL = "https://moola-peach.vercel.app"
-START_PARAM = "7334566449"
+START_PARAM = "12345678"
 
 RESET = "\033[0m"
 BOLD = "\033[1m"
@@ -27,19 +28,8 @@ RED = "\033[91m"
 GREEN = "\033[92m"
 YELLOW = "\033[93m"
 
-SOCIAL_TASKS = [
-    "follow_x",
-    "subscribe_youtube",
-    "retweet",
-    "react_post",
-    "x_like",
-    "x_retweet2",
-    "x_comment",
-    "x_vote",
-    "boost_channel",
-    "join_channel",
-    "join_partner",
-]
+PRE_CLAIM_TASKS = ("join_channel", "join_partner")
+SKIP_TASK_IDS = {"mine", "tasks", "friends", "profile", "nfts"}
 
 
 def log_green(msg: str) -> None:
@@ -122,6 +112,31 @@ def get_proxy_port(proxy: str) -> str:
 
 def build_proxy_dict(proxy: str) -> dict[str, str]:
     return {"http": proxy, "https": proxy}
+
+
+def fetch_task_ids() -> list[str]:
+    try:
+        page_html = requests.get(BASE_URL + "/", timeout=30).text
+        js_files = re.findall(r'/_next/static/chunks/app/(page-[a-f0-9]+\.js)', page_html)
+        js_files = list(set(js_files))
+        all_task_ids: list[str] = []
+        for js_name in js_files:
+            url = f"{BASE_URL}/_next/static/chunks/app/{js_name}"
+            content = requests.get(url, timeout=30).text
+            arrays = re.finditer(r'([a-zA-Z_$][a-zA-Z0-9_$]*)\s*=\s*(\[(?:[^\[\]]|\[(?:[^\[\]])*\])*\])', content)
+            for m in arrays:
+                body = m.group(2)
+                ids = re.findall(r'\bid\s*:\s*"([^"]+)"', body)
+                ids = [i for i in ids if i not in SKIP_TASK_IDS and not i.startswith("1")]
+                all_task_ids.extend(ids)
+        result = list(dict.fromkeys(all_task_ids))
+        if result:
+            log_green(f"Fetched {len(result)} social tasks from server")
+            return result
+    except Exception:
+        pass
+    log_yellow("Failed to fetch task list from server, social tasks will be skipped")
+    return []
 
 
 def countdown(seconds: int) -> None:
@@ -238,13 +253,19 @@ def handle_nft(api: MoolaAPI, account: int, nft_enabled: bool, collection: list[
         log_red(f"Account {account} failed to mint {target_name}, skipping NFT purchase")
 
 
-def run_account(init_data: str, account: int, proxy: str | None, nft_enabled: bool) -> None:
+def run_account(init_data: str, account: int, proxy: str | None, nft_enabled: bool, task_ids: list[str]) -> None:
     api = MoolaAPI(init_data, proxy)
 
     if proxy:
         masked_ip = mask_proxy_ip(proxy)
         port = get_proxy_port(proxy)
         log_yellow(f"Account {account} using proxy http://user:pass@{masked_ip}:{port}")
+
+    for task_id in PRE_CLAIM_TASKS:
+        try:
+            api.claim_social(task_id)
+        except Exception:
+            pass
 
     raw = api.onboard()
     user = extract_user(raw)
@@ -312,7 +333,7 @@ def run_account(init_data: str, account: int, proxy: str | None, nft_enabled: bo
         except Exception:
             log_yellow(f"Account {account} mining start failed, skipping")
 
-    pending_tasks = [t for t in SOCIAL_TASKS if t not in social_done]
+    pending_tasks = [t for t in task_ids if t not in social_done]
     if pending_tasks:
         log_yellow(f"Account {account} has {len(pending_tasks)} pending social tasks to claim")
         for task_id in pending_tasks:
@@ -394,13 +415,15 @@ def main() -> None:
         show_banner(MY_PROJECT)
         log_green(f"Starting cycle {cycle} with {len(accounts)} accounts")
 
+        task_ids = fetch_task_ids()
+
         for idx, init_data in enumerate(accounts):
             if idx > 0:
                 print()
             account = idx + 1
             proxy = get_proxy_for_account(proxies, idx)
             try:
-                run_account(init_data, account, proxy, nft_enabled)
+                run_account(init_data, account, proxy, nft_enabled, task_ids)
             except ExpiredSessionError:
                 log_red(f"Account {account} session is expired, skipping")
             except Exception:
