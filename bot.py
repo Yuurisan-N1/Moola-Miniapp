@@ -289,6 +289,9 @@ def run_account(init_data: str, account: int, proxy: str | None, nft_enabled: bo
     verified = ads_info.get("verified")
     verify_total = ads_info.get("verifyTotal")
     verify_reward = ads_info.get("verifyReward")
+    watched2 = ads_info.get("watched2")
+    watch2_total = ads_info.get("watch2Total")
+    watch2_reward = ads_info.get("watch2Reward")
 
     owned_nfts = [c for c in collection if c.get("owned")]
     active_nft = next((c for c in collection if c.get("active")), None)
@@ -300,6 +303,7 @@ def run_account(init_data: str, account: int, proxy: str | None, nft_enabled: bo
     log_green(f"Account {account} check-in available is {can_checkin} on day {checkin_day}")
     log_green(f"Account {account} watch ads progress {watched} of {watch_total} at {watch_reward} MOOLA each")
     log_green(f"Account {account} verify ads progress {verified} of {verify_total} at {verify_reward} MOOLA each")
+    log_green(f"Account {account} watch2 ads progress {watched2} of {watch2_total} at {watch2_reward} MOOLA each")
     log_green(f"Account {account} active NFT is {active_nft_name}")
     log_green(f"Account {account} owned NFTs are {', '.join(c.get('name', c.get('id', '')) for c in owned_nfts)}")
 
@@ -368,6 +372,18 @@ def run_account(init_data: str, account: int, proxy: str | None, nft_enabled: bo
                 log_yellow(f"Account {account} verify ad claim failed, skipping")
     else:
         log_green(f"Account {account} all verify ads already completed")
+
+    watch2_remaining = max(0, watch2_total - watched2)
+    if watch2_remaining > 0:
+        log_yellow(f"Account {account} claiming {watch2_remaining} watch2 ads")
+        for i in range(watch2_remaining):
+            try:
+                api.claim_ad("watch2")
+                log_green(f"Account {account} watch2 ad {watched2 + i + 1} of {watch2_total} claimed successfully")
+            except Exception:
+                log_yellow(f"Account {account} watch2 ad claim failed, skipping")
+    else:
+        log_green(f"Account {account} all watch2 ads already completed")
 
     if not mining_active:
         try:
