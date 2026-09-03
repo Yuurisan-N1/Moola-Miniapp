@@ -30,6 +30,8 @@ YELLOW = "\033[93m"
 
 PRE_CLAIM_TASKS = ("join_channel", "join_partner")
 SKIP_TASK_IDS = {"mine", "tasks", "friends", "profile", "nfts"}
+ADS_SKIP_KEYS = {"day", "allDone"}
+ADS_SUFFIX_KEYS = {"Total", "Reward", "WaitSeconds"}
 
 
 def log_green(msg: str) -> None:
@@ -137,6 +139,39 @@ def fetch_task_ids() -> list[str]:
         pass
     log_yellow("Failed to fetch task list from server, social tasks will be skipped")
     return []
+
+
+def parse_ad_slots(ads_info: dict[str, Any]) -> list[dict[str, Any]]:
+    keys = list(ads_info.keys())
+    slots = []
+
+    for i, key in enumerate(keys):
+        if not key.endswith("Total") or key in ADS_SKIP_KEYS:
+            continue
+
+        ad_type = key[: -len("Total")]
+        reward_key = f"{ad_type}Reward"
+        wait_key = f"{ad_type}WaitSeconds"
+
+        if reward_key not in ads_info:
+            continue
+
+        if i == 0:
+            continue
+        done_key = keys[i - 1]
+
+        if done_key in ADS_SKIP_KEYS or not isinstance(ads_info[done_key], (int, float)):
+            continue
+
+        slots.append({
+            "type": ad_type,
+            "done": ads_info[done_key],
+            "total": ads_info[key],
+            "reward": ads_info.get(reward_key, 0),
+            "wait": ads_info.get(wait_key, 0),
+        })
+
+    return slots
 
 
 def countdown(seconds: int) -> None:
@@ -283,15 +318,7 @@ def run_account(init_data: str, account: int, proxy: str | None, nft_enabled: bo
     can_checkin = checkin_info.get("canClaim", False)
     checkin_day = checkin_info.get("day", 0)
 
-    watched = ads_info.get("watched")
-    watch_total = ads_info.get("watchTotal")
-    watch_reward = ads_info.get("watchReward")
-    verified = ads_info.get("verified")
-    verify_total = ads_info.get("verifyTotal")
-    verify_reward = ads_info.get("verifyReward")
-    watched2 = ads_info.get("watched2")
-    watch2_total = ads_info.get("watch2Total")
-    watch2_reward = ads_info.get("watch2Reward")
+    ad_slots = parse_ad_slots(ads_info)
 
     owned_nfts = [c for c in collection if c.get("owned")]
     active_nft = next((c for c in collection if c.get("active")), None)
@@ -301,9 +328,8 @@ def run_account(init_data: str, account: int, proxy: str | None, nft_enabled: bo
     log_green(f"Account {account} balance is {balance} MOOLA")
     log_green(f"Account {account} mining status is {'active' if mining_active else 'inactive'}, pending {mining_pending} MOOLA")
     log_green(f"Account {account} check-in available is {can_checkin} on day {checkin_day}")
-    log_green(f"Account {account} watch ads progress {watched} of {watch_total} at {watch_reward} MOOLA each")
-    log_green(f"Account {account} verify ads progress {verified} of {verify_total} at {verify_reward} MOOLA each")
-    log_green(f"Account {account} watch2 ads progress {watched2} of {watch2_total} at {watch2_reward} MOOLA each")
+    for slot in ad_slots:
+        log_green(f"Account {account} {slot['type']} ads progress {slot['done']} of {slot['total']} at {slot['reward']} MOOLA each")
     log_green(f"Account {account} active NFT is {active_nft_name}")
     log_green(f"Account {account} owned NFTs are {', '.join(c.get('name', c.get('id', '')) for c in owned_nfts)}")
 
@@ -349,41 +375,18 @@ def run_account(init_data: str, account: int, proxy: str | None, nft_enabled: bo
     else:
         log_green(f"Account {account} all social tasks already completed")
 
-    watch_remaining = max(0, watch_total - watched)
-    if watch_remaining > 0:
-        log_yellow(f"Account {account} claiming {watch_remaining} watch ads")
-        for i in range(watch_remaining):
-            try:
-                api.claim_ad("watch")
-                log_green(f"Account {account} watch ad {watched + i + 1} of {watch_total} claimed successfully")
-            except Exception:
-                log_yellow(f"Account {account} watch ad claim failed, skipping")
-    else:
-        log_green(f"Account {account} all watch ads already completed")
-
-    verify_remaining = max(0, verify_total - verified)
-    if verify_remaining > 0:
-        log_yellow(f"Account {account} claiming {verify_remaining} verify ads")
-        for i in range(verify_remaining):
-            try:
-                api.claim_ad("verify")
-                log_green(f"Account {account} verify ad {verified + i + 1} of {verify_total} claimed successfully")
-            except Exception:
-                log_yellow(f"Account {account} verify ad claim failed, skipping")
-    else:
-        log_green(f"Account {account} all verify ads already completed")
-
-    watch2_remaining = max(0, watch2_total - watched2)
-    if watch2_remaining > 0:
-        log_yellow(f"Account {account} claiming {watch2_remaining} watch2 ads")
-        for i in range(watch2_remaining):
-            try:
-                api.claim_ad("watch2")
-                log_green(f"Account {account} watch2 ad {watched2 + i + 1} of {watch2_total} claimed successfully")
-            except Exception:
-                log_yellow(f"Account {account} watch2 ad claim failed, skipping")
-    else:
-        log_green(f"Account {account} all watch2 ads already completed")
+    for slot in ad_slots:
+        remaining = max(0, slot["total"] - slot["done"])
+        if remaining > 0:
+            log_yellow(f"Account {account} claiming {remaining} {slot['type']} ads")
+            for i in range(remaining):
+                try:
+                    api.claim_ad(slot["type"])
+                    log_green(f"Account {account} {slot['type']} ad {slot['done'] + i + 1} of {slot['total']} claimed successfully")
+                except Exception:
+                    log_yellow(f"Account {account} {slot['type']} ad claim failed, skipping")
+        else:
+            log_green(f"Account {account} all {slot['type']} ads already completed")
 
     if not mining_active:
         try:
