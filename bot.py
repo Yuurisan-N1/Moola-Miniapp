@@ -20,7 +20,7 @@ DATA_FILE = BASE_DIR / "data.txt"
 PROXY_FILE = BASE_DIR / "proxy.txt"
 CONFIG_FILE = BASE_DIR / "config.json"
 BASE_URL = "https://moola-peach.vercel.app"
-START_PARAM = "12345678"
+START_PARAM = "1231751391"
 
 RESET = "\033[0m"
 BOLD = "\033[1m"
@@ -158,6 +158,7 @@ def parse_ad_slots(ads_info: dict[str, Any]) -> list[dict[str, Any]]:
 
         if i == 0:
             continue
+
         done_key = keys[i - 1]
 
         if done_key in ADS_SKIP_KEYS or not isinstance(ads_info[done_key], (int, float)):
@@ -256,7 +257,7 @@ def handle_nft(api: MoolaAPI, account: int, nft_enabled: bool, collection: list[
     active_nft_cost = float(active_nft.get("costMoola") or 0) if active_nft else 0.0
 
     if not nft_enabled:
-        log_yellow(f"Account {account} NFT purchase is disabled {active_nft_name} as active NFT")
+        log_yellow(f"Account {account} NFT purchase is disabled, currently holding {active_nft_name} as active NFT")
         return
 
     candidates = [
@@ -269,7 +270,7 @@ def handle_nft(api: MoolaAPI, account: int, nft_enabled: bool, collection: list[
     ]
 
     if not candidates:
-        log_yellow(f"Account {account} no NFT upgrade available {active_nft_name} as active NFT")
+        log_yellow(f"Account {account} no NFT upgrade available, currently holding {active_nft_name} as active NFT")
         return
 
     target = max(candidates, key=lambda c: float(c.get("costMoola", 0)))
@@ -312,6 +313,7 @@ def run_account(init_data: str, account: int, proxy: str | None, nft_enabled: bo
     ads_info = user.get("ads") or {}
     collection = user.get("collection") or []
     social_done = user.get("socialDone") or []
+    custom_tasks = user.get("customTasks") or []
 
     mining_active = mining.get("active", False)
     mining_pending = mining.get("pending", 0)
@@ -324,6 +326,9 @@ def run_account(init_data: str, account: int, proxy: str | None, nft_enabled: bo
     active_nft = next((c for c in collection if c.get("active")), None)
     active_nft_name = active_nft.get("name", "None") if active_nft else "None"
 
+    pending_tasks = [t for t in task_ids if t not in social_done]
+    pending_custom = [t for t in custom_tasks if t.get("active") and t.get("id") not in social_done]
+
     log_green(f"Account {account} logged in as {username}")
     log_green(f"Account {account} balance is {balance} MOOLA")
     log_green(f"Account {account} mining status is {'active' if mining_active else 'inactive'}, pending {mining_pending} MOOLA")
@@ -332,6 +337,7 @@ def run_account(init_data: str, account: int, proxy: str | None, nft_enabled: bo
         log_green(f"Account {account} {slot['type']} ads progress {slot['done']} of {slot['total']} at {slot['reward']} MOOLA each")
     log_green(f"Account {account} active NFT is {active_nft_name}")
     log_green(f"Account {account} owned NFTs are {', '.join(c.get('name', c.get('id', '')) for c in owned_nfts)}")
+    log_green(f"Account {account} pending social tasks {len(pending_tasks)}, pending custom tasks {len(pending_custom)}")
 
     if can_checkin:
         try:
@@ -363,7 +369,6 @@ def run_account(init_data: str, account: int, proxy: str | None, nft_enabled: bo
         except Exception:
             log_yellow(f"Account {account} mining start failed, skipping")
 
-    pending_tasks = [t for t in task_ids if t not in social_done]
     if pending_tasks:
         log_yellow(f"Account {account} has {len(pending_tasks)} pending social tasks to claim")
         for task_id in pending_tasks:
@@ -374,6 +379,17 @@ def run_account(init_data: str, account: int, proxy: str | None, nft_enabled: bo
                 log_yellow(f"Account {account} social task {task_id} could not be claimed, skipping")
     else:
         log_green(f"Account {account} all social tasks already completed")
+
+    if pending_custom:
+        log_yellow(f"Account {account} has {len(pending_custom)} pending custom tasks to claim")
+        for task in pending_custom:
+            try:
+                api.claim_social(task["id"])
+                log_green(f"Account {account} custom task {task['title']} claimed successfully")
+            except Exception:
+                log_yellow(f"Account {account} custom task {task['title']} could not be claimed, skipping")
+    else:
+        log_green(f"Account {account} all custom tasks already completed")
 
     for slot in ad_slots:
         remaining = max(0, slot["total"] - slot["done"])
